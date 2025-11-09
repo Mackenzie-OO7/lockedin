@@ -9,9 +9,12 @@
     "dev": "node --watch src/index.js"
   },
   "dependencies": {
-    "@stellar/stellar-sdk": "^12.3.0",
+    "@stellar/stellar-sdk": "^14.3.1",
+    "dotenv": "^17.2.3",
     "lockedin": "file:../",
-    "node-cron": "^3.0.3",
-    "dotenv": "^16.4.5"
+    "node-cron": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node-cron": "^3.0.11"
   }
 }

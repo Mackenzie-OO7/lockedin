@@ -1,5 +1,6 @@
 import * as Client from 'lockedin';
 import { Keypair } from '@stellar/stellar-sdk';
+import { Buffer } from 'buffer';
 
 export function initializeContract(
   adminSecretKey: string,
@@ -21,9 +22,12 @@ export async function getAllCycles(contract: Client.Client, adminKeypair: Keypai
   try {
     const tx = await contract.get_all_cycles();
     const signed = await tx.signAuthEntries({
-      publicKey: adminKeypair.publicKey(),
-      signAuthEntry: (entry) => {
-        return adminKeypair.sign(entry.toXDR()).toString('base64');
+      signAuthEntry: async (entryXdr: string) => {
+        const signature = adminKeypair.sign(Buffer.from(entryXdr, 'base64'));
+        return {
+          signedAuthEntry: signature.toString('base64'),
+          signerAddress: adminKeypair.publicKey()
+        };
       }
     });
     const result = await signed.send();
@@ -35,7 +39,6 @@ export async function getAllCycles(contract: Client.Client, adminKeypair: Keypai
     return [];
   }
 }
-
 
 export async function getCycleBills(contract: Client.Client, cycleId: bigint): Promise<any[]> {
   try {
@@ -75,7 +78,7 @@ export function isBillDueToday(bill: any): boolean {
 }
 
 export function isBillDueSoon(bill: any, hoursAhead: number = 24): boolean {
-  const now = Date.now() / 1000;
+  const now = Date.now() / 1000; // Convert to seconds
   const dueDate = Number(bill.due_date);
   const timeUntilDue = dueDate - now;
   const hoursUntilDue = timeUntilDue / 3600;
@@ -90,9 +93,12 @@ export async function payBill(contract: Client.Client, adminKeypair: Keypair, bi
     const tx = await contract.admin_pay_bill({ bill_id: billId });
 
     const signed = await tx.signAuthEntries({
-      publicKey: adminKeypair.publicKey(),
-      signAuthEntry: (entry) => {
-        return adminKeypair.sign(entry.toXDR()).toString('base64');
+      signAuthEntry: async (entryXdr: string) => {
+        const signature = adminKeypair.sign(Buffer.from(entryXdr, 'base64'));
+        return {
+          signedAuthEntry: signature.toString('base64'),
+          signerAddress: adminKeypair.publicKey()
+        };
       }
     });
 
