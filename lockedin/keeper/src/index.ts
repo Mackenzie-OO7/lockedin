@@ -3,10 +3,8 @@ import dotenv from 'dotenv';
 import { Keypair } from '@stellar/stellar-sdk';
 import { initializeContract, processDueBills } from './payment.js';
 
-// Load environment variables
 dotenv.config();
 
-// Validate required environment variables
 const requiredEnvVars = [
   'ADMIN_SECRET_KEY',
   'CONTRACT_ID',
@@ -22,7 +20,6 @@ for (const varName of requiredEnvVars) {
   }
 }
 
-// Initialize admin keypair
 let adminKeypair;
 try {
   adminKeypair = Keypair.fromSecret(process.env.ADMIN_SECRET_KEY);
@@ -32,7 +29,6 @@ try {
   process.exit(1);
 }
 
-// Initialize contract client
 const contract = initializeContract(
   process.env.ADMIN_SECRET_KEY,
   process.env.CONTRACT_ID,
@@ -51,7 +47,6 @@ const cronSchedule = process.env.CRON_SCHEDULE || '0 12 * * *';
 console.log(`Cron Schedule: ${cronSchedule}`);
 console.log(`(Next run: ${cron.validate(cronSchedule) ? 'valid schedule' : 'INVALID SCHEDULE'})\n`);
 
-// Validate cron schedule
 if (!cron.validate(cronSchedule)) {
   console.error('❌ Invalid cron schedule');
   process.exit(1);

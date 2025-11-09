@@ -203,7 +203,6 @@ fn test_add_bill() {
         &due_date,
         &false,
         &recurrence_calendar,
-        &false,
     );
 
     assert_eq!(bill_id, 0);
@@ -212,44 +211,6 @@ fn test_add_bill() {
     assert_eq!(bill.name, bill_name);
     assert_eq!(bill.amount, bill_amount);
     assert_eq!(bill.is_paid, false);
-    assert_eq!(bill.is_emergency, false);
-}
-
-#[test]
-fn test_add_emergency_bill() {
-    let env = Env::default();
-    env.mock_all_auths();
-    set_ledger_time(&env, 1000, 100);
-
-    let admin = Address::generate(&env);
-    let user = Address::generate(&env);
-    let (usdc_token, token) = create_token_contract(&env, &admin);
-    let client = create_lockedin_contract(&env, &admin, &usdc_token);
-
-    let amount = 100_000_000_000_000_000_000i128;
-    mint_tokens(&env, &token, &user, amount);
-
-    let cycle_id = client.create_cycle(&user, &3, &amount);
-
-    set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
-
-    let bill_name = String::from_str(&env, "Emergency");
-    let bill_amount = 5_000_000_000_000_000_000i128; // 5% of deposited
-    let due_date = 1000 + (33 * 24 * 60 * 60); // 33 days
-    let recurrence_calendar = Vec::new(&env);
-
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &bill_name,
-        &bill_amount,
-        &due_date,
-        &false,
-        &recurrence_calendar,
-        &true,
-    );
-
-    let bill = client.get_bill(&bill_id);
-    assert_eq!(bill.is_emergency, true);
 }
 
 #[test]
@@ -278,10 +239,8 @@ fn test_pay_bill() {
         &due_date,
         &false,
         &Vec::new(&env),
-        &false,
     );
 
-    // Fast forward to due date
     set_ledger_time(&env, due_date + 1, 100 + (17280 * 11));
 
     client.pay_bill(&bill_id);
@@ -315,7 +274,6 @@ fn test_pay_bill_not_due() {
         &due_date,
         &false,
         &Vec::new(&env),
-        &false,
     );
 
     client.pay_bill(&bill_id);
@@ -337,7 +295,6 @@ fn test_end_cycle() {
 
     let cycle_id = client.create_cycle(&user, &3, &amount);
 
-    // Fast forward past 3 months
     set_ledger_time(&env, 1000 + (91 * 24 * 60 * 60), 100 + (17280 * 91));
 
     client.end_cycle(&cycle_id);
@@ -367,7 +324,7 @@ fn test_end_cycle_too_early() {
 }
 
 #[test]
-fn test_cancel_bill() {
+fn test_cancel_bill_occurrence() {
     let env = Env::default();
     env.mock_all_auths();
     set_ledger_time(&env, 1000, 100);
@@ -390,14 +347,11 @@ fn test_cancel_bill() {
         &due_date,
         &false,
         &Vec::new(&env),
-        &false,
     );
 
-    // Advance to another month to cancel
     set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
 
-    client.cancel_bill(&bill_id);
-
+    client.cancel_bill_occurrence(&bill_id);
 }
 
 #[test]
@@ -416,7 +370,6 @@ fn test_get_cycle_bills() {
 
     let cycle_id = client.create_cycle(&user, &3, &amount);
 
-    // add multiple bills in the same month-
     let due_date_1 = 1000 + (10 * 24 * 60 * 60); // 10 days
     let due_date_2 = 1000 + (15 * 24 * 60 * 60); // 15 days
 
@@ -427,7 +380,6 @@ fn test_get_cycle_bills() {
         &due_date_1,
         &false,
         &Vec::new(&env),
-        &false,
     );
 
     client.add_bill(
@@ -437,10 +389,397 @@ fn test_get_cycle_bills() {
         &due_date_2,
         &false,
         &Vec::new(&env),
-        &false,
     );
 
     let bills = client.get_cycle_bills(&cycle_id);
 
     assert_eq!(bills.len(), 2);
+}
+
+// Ibtegration tests
+
+#[test]
+#[should_panic(expected = "#23")]
+fn test_add_bill_day_29_validation() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    // Try to add bill with day 29 (should fail)
+    let due_date = 1000 + (29 * 24 * 60 * 60);
+    client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Bad Bill"),
+        &10_000_000_000_000_000_000i128,
+        &due_date,
+        &true,
+        &Vec::new(&env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "#15")]
+fn test_over_allocation_protection() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128; // 100 USDC
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    let due_date = 1000 + (10 * 24 * 60 * 60);
+    client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Too Much"),
+        &99_000_000_000_000_000_000i128, // 99 USDC
+        &due_date,
+        &false,
+        &Vec::new(&env),
+    );
+}
+
+#[test]
+#[should_panic(expected = "#21")]
+fn test_double_payment_prevention_recurring() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    let due_date = 1000 + (10 * 24 * 60 * 60);
+    let recurrence_calendar = Vec::from_array(&env, [1, 2, 3]);
+
+    let bill_id = client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Recurring Bill"),
+        &10_000_000_000_000_000_000i128,
+        &due_date,
+        &true,
+        &recurrence_calendar,
+    );
+
+    set_ledger_time(&env, due_date + 1, 100 + (17280 * 11));
+    client.admin_pay_bill(&bill_id);
+
+    set_ledger_time(&env, due_date + (15 * 24 * 60 * 60), 100 + (17280 * 26));
+    client.admin_pay_bill(&bill_id);
+}
+
+#[test]
+fn test_cancel_bill_occurrence_recurring() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    let due_date = 1000 + (10 * 24 * 60 * 60);
+    let recurrence_calendar = Vec::from_array(&env, [1, 2, 3]);
+
+    let bill_id = client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Recurring Bill"),
+        &10_000_000_000_000_000_000i128,
+        &due_date,
+        &true,
+        &recurrence_calendar,
+    );
+
+    set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
+
+    client.cancel_bill_occurrence(&bill_id);
+
+    let bill = client.get_bill(&bill_id);
+    assert_eq!(bill.is_recurring, true);
+
+    assert!(bill.last_paid_date.is_some());
+}
+
+#[test]
+fn test_cancel_bill_all_occurrences() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    let due_date = 1000 + (10 * 24 * 60 * 60);
+    let recurrence_calendar = Vec::from_array(&env, [1, 2, 3]);
+
+    let bill_id = client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Recurring Bill"),
+        &10_000_000_000_000_000_000i128,
+        &due_date,
+        &true,
+        &recurrence_calendar,
+    );
+
+    set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
+
+    client.cancel_bill_all_occurrences(&bill_id);
+
+    let bills = client.get_cycle_bills(&cycle_id);
+    assert_eq!(bills.len(), 0);
+}
+
+#[test]
+fn test_batch_add_bills() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    let mut bills = Vec::new(&env);
+
+    let due_date_1 = 1000 + (10 * 24 * 60 * 60);
+    let due_date_2 = 1000 + (15 * 24 * 60 * 60);
+    let due_date_3 = 1000 + (20 * 24 * 60 * 60);
+
+    bills.push_back((
+        String::from_str(&env, "Bill 1"),
+        5_000_000_000_000_000_000i128,
+        due_date_1,
+        false,
+        Vec::new(&env),
+    ));
+
+    bills.push_back((
+        String::from_str(&env, "Bill 2"),
+        10_000_000_000_000_000_000i128,
+        due_date_2,
+        false,
+        Vec::new(&env),
+    ));
+
+    bills.push_back((
+        String::from_str(&env, "Bill 3"),
+        15_000_000_000_000_000_000i128,
+        due_date_3,
+        false,
+        Vec::new(&env),
+    ));
+
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+
+    assert_eq!(bill_ids.len(), 3);
+    assert_eq!(bill_ids.get(0).unwrap(), 0);
+    assert_eq!(bill_ids.get(1).unwrap(), 1);
+    assert_eq!(bill_ids.get(2).unwrap(), 2);
+
+    let cycle_bills = client.get_cycle_bills(&cycle_id);
+    assert_eq!(cycle_bills.len(), 3);
+}
+
+#[test]
+fn test_keeper_end_cycle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let _keeper = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    set_ledger_time(&env, 1000 + (100 * 24 * 60 * 60), 100 + (17280 * 100));
+
+    client.keeper_end_cycle(&cycle_id);
+
+    let cycle = client.get_cycle(&cycle_id);
+    assert_eq!(cycle.is_active, false);
+}
+
+#[test]
+#[should_panic(expected = "#30")]
+fn test_keeper_end_cycle_too_early() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    set_ledger_time(&env, 1000 + (10 * 24 * 60 * 60), 100 + (17280 * 10));
+    client.keeper_end_cycle(&cycle_id);
+}
+
+#[test]
+fn test_admin_transfer_and_cancel() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    let (usdc_token, _) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    client.transfer_admin(&new_admin, &1000);
+
+    client.cancel_admin_transfer();
+}
+
+#[test]
+#[should_panic(expected = "#40")]
+fn test_admin_transfer_race_condition_protection() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let new_admin_1 = Address::generate(&env);
+    let new_admin_2 = Address::generate(&env);
+    let (usdc_token, _) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    client.transfer_admin(&new_admin_1, &2000);
+
+    client.transfer_admin(&new_admin_2, &3000);
+}
+
+#[test]
+fn test_batch_cancel_bills_occurrences() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &3, &amount);
+
+    let due_date_1 = 1000 + (10 * 24 * 60 * 60);
+    let due_date_2 = 1000 + (15 * 24 * 60 * 60);
+
+    let bill_id_1 = client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Bill 1"),
+        &10_000_000_000_000_000_000i128,
+        &due_date_1,
+        &false,
+        &Vec::new(&env),
+    );
+
+    let bill_id_2 = client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Bill 2"),
+        &15_000_000_000_000_000_000i128,
+        &due_date_2,
+        &true,
+        &Vec::from_array(&env, [1, 2]),
+    );
+
+    set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
+
+    let bill_ids = Vec::from_array(&env, [bill_id_1, bill_id_2]);
+    client.cancel_bills_occurrences(&bill_ids);
+
+    let bill_2 = client.get_bill(&bill_id_2);
+    assert_eq!(bill_2.is_recurring, true);
+    assert!(bill_2.last_paid_date.is_some());
+
+    let bills = client.get_cycle_bills(&cycle_id);
+    assert_eq!(bills.len(), 1);
+}
+
+#[test]
+fn test_recurring_bill_with_recurrence_calendar() {
+    let env = Env::default();
+    env.mock_all_auths();
+    set_ledger_time(&env, 1000, 100);
+
+    let admin = Address::generate(&env);
+    let user = Address::generate(&env);
+    let (usdc_token, token) = create_token_contract(&env, &admin);
+    let client = create_lockedin_contract(&env, &admin, &usdc_token);
+
+    let amount = 100_000_000_000_000_000_000i128;
+    mint_tokens(&env, &token, &user, amount);
+
+    let cycle_id = client.create_cycle(&user, &6, &amount);
+
+    let due_date = 1000 + (10 * 24 * 60 * 60);
+    let recurrence_calendar = Vec::from_array(&env, [1, 3, 5]);
+
+    let bill_id = client.add_bill(
+        &cycle_id,
+        &String::from_str(&env, "Quarterly Bill"),
+        &10_000_000_000_000_000_000i128,
+        &due_date,
+        &true,
+        &recurrence_calendar,
+    );
+
+    let bill = client.get_bill(&bill_id);
+    assert_eq!(bill.is_recurring, true);
+    assert_eq!(bill.recurrence_calendar.len(), 3);
 }

@@ -1,10 +1,12 @@
 import * as Client from 'lockedin';
 import { Keypair } from '@stellar/stellar-sdk';
 
-/**
- * Initialize the LockedIn contract client with admin credentials
- */
-export function initializeContract(adminSecretKey, contractId, rpcUrl, networkPassphrase) {
+export function initializeContract(
+  adminSecretKey: string,
+  contractId: string,
+  rpcUrl: string,
+  networkPassphrase: string
+): Client.Client {
   const adminKeypair = Keypair.fromSecret(adminSecretKey);
 
   return new Client.Client({
@@ -15,10 +17,7 @@ export function initializeContract(adminSecretKey, contractId, rpcUrl, networkPa
   });
 }
 
-/**
- * Get all cycles from the contract
- */
-export async function getAllCycles(contract, adminKeypair) {
+export async function getAllCycles(contract: Client.Client, adminKeypair: Keypair): Promise<bigint[]> {
   try {
     const tx = await contract.get_all_cycles();
     const signed = await tx.signAuthEntries({
@@ -29,7 +28,6 @@ export async function getAllCycles(contract, adminKeypair) {
     });
     const result = await signed.send();
 
-    // Unwrap Result type
     const cycleIds = result?.value || result;
     return cycleIds || [];
   } catch (error) {
@@ -38,10 +36,8 @@ export async function getAllCycles(contract, adminKeypair) {
   }
 }
 
-/**
- * Get bills for a specific cycle
- */
-export async function getCycleBills(contract, cycleId) {
+
+export async function getCycleBills(contract: Client.Client, cycleId: bigint): Promise<any[]> {
   try {
     const tx = await contract.get_cycle_bills({ cycle_id: cycleId });
     const simulated = await tx.simulate();
@@ -51,7 +47,6 @@ export async function getCycleBills(contract, cycleId) {
       return [];
     }
 
-    // Fetch full bill data for each bill ID
     const bills = [];
     for (const billId of billIds) {
       try {
@@ -71,10 +66,7 @@ export async function getCycleBills(contract, cycleId) {
   }
 }
 
-/**
- * Check if a bill is due today
- */
-export function isBillDueToday(bill) {
+export function isBillDueToday(bill: any): boolean {
   const now = Date.now();
   const currentDayStart = Math.floor(now / 86400000) * 86400;
   const dueDayStart = Math.floor(Number(bill.due_date) / 86400) * 86400;
@@ -82,11 +74,8 @@ export function isBillDueToday(bill) {
   return currentDayStart === dueDayStart && !bill.is_paid;
 }
 
-/**
- * Check if a bill is due within the notification window (default 24 hours)
- */
-export function isBillDueSoon(bill, hoursAhead = 24) {
-  const now = Date.now() / 1000; // Convert to seconds
+export function isBillDueSoon(bill: any, hoursAhead: number = 24): boolean {
+  const now = Date.now() / 1000;
   const dueDate = Number(bill.due_date);
   const timeUntilDue = dueDate - now;
   const hoursUntilDue = timeUntilDue / 3600;
@@ -94,10 +83,7 @@ export function isBillDueSoon(bill, hoursAhead = 24) {
   return hoursUntilDue > 0 && hoursUntilDue <= hoursAhead && !bill.is_paid;
 }
 
-/**
- * Pay a bill using admin privileges
- */
-export async function payBill(contract, adminKeypair, billId) {
+export async function payBill(contract: Client.Client, adminKeypair: Keypair, billId: bigint): Promise<{ success: boolean; billId: bigint; result?: any; error?: string }> {
   try {
     console.log(`Paying bill ${billId}...`);
 
@@ -114,16 +100,13 @@ export async function payBill(contract, adminKeypair, billId) {
 
     console.log(`✅ Bill ${billId} paid successfully`);
     return { success: true, billId, result };
-  } catch (error) {
+  } catch (error: any) {
     console.error(`❌ Error paying bill ${billId}:`, error);
     return { success: false, billId, error: error.message };
   }
 }
 
-/**
- * Process all bills due today across all cycles
- */
-export async function processDueBills(contract, adminKeypair) {
+export async function processDueBills(contract: Client.Client, adminKeypair: Keypair): Promise<{ processed: number; paid: number; failed: number }> {
   console.log('\n=== Processing Due Bills ===');
   console.log(`Timestamp: ${new Date().toISOString()}\n`);
 
@@ -168,10 +151,7 @@ export async function processDueBills(contract, adminKeypair) {
   return { processed, paid, failed };
 }
 
-/**
- * Get all bills due soon (for notifications)
- */
-export async function getBillsDueSoon(contract, adminKeypair, hoursAhead = 24) {
+export async function getBillsDueSoon(contract: Client.Client, adminKeypair: Keypair, hoursAhead: number = 24): Promise<any[]> {
   const cycleIds = await getAllCycles(contract, adminKeypair);
 
   if (!cycleIds || cycleIds.length === 0) {
