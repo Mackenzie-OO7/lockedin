@@ -11,7 +11,6 @@ export default function Dashboard() {
   const [activeSection, setActiveSection] = useState<"cycles" | "create">("cycles");
   const [billsDueSoon, setBillsDueSoon] = useState<any[]>([]);
 
-  // Create Cycle Form State
   const [durationMonths, setDurationMonths] = useState("3");
   const [depositAmount, setDepositAmount] = useState("");
 
@@ -37,11 +36,10 @@ export default function Dashboard() {
       const { result: userCycles } = await contract.get_user_cycles({ user: address });
 
       const dueSoon: any[] = [];
-      const now = Date.now() / 1000; // Current time in seconds
+      const now = Date.now() / 1000;
       const hoursAhead = 24;
       const secondsAhead = hoursAhead * 3600;
 
-      // Check bills in each cycle
       for (const cycleId of userCycles) {
         const billsTx = await contract.get_cycle_bills({ cycle_id: cycleId });
         const billsSim = await billsTx.simulate();
@@ -49,7 +47,6 @@ export default function Dashboard() {
 
         if (!billIds || billIds.length === 0) continue;
 
-        // Check each bill
         for (const billId of billIds) {
           const billTx = await contract.get_bill({ bill_id: billId });
           const billSim = await billTx.simulate();
@@ -58,7 +55,6 @@ export default function Dashboard() {
           const dueDate = Number(billData.due_date);
           const timeUntilDue = dueDate - now;
 
-          // If bill is due within 24 hours and not paid
           if (timeUntilDue > 0 && timeUntilDue <= secondsAhead && !billData.is_paid) {
             dueSoon.push({
               ...billData,
@@ -101,17 +97,14 @@ export default function Dashboard() {
 
     setLoading(true);
     try {
-      // Convert USDC to stroops (1 USDC = 10^7 stroops)
       const amountInStroops = BigInt(parseFloat(depositAmount) * 10_000_000);
 
-      // Create contract instance with user's public key
       const contract = new LockedInContract.Client({
         ...LockedInContract.networks.testnet,
         rpcUrl,
         publicKey: address,
       });
 
-      // Build and sign the transaction
       const tx = await contract.create_cycle({
         user: address,
         duration_months: parseInt(durationMonths),
@@ -392,7 +385,6 @@ function getDaySuffix(day: number): string {
   }
 }
 
-// Cycle Card Component
 function CycleCard({ cycleId }: { cycleId: bigint }) {
   const { address, signTransaction } = useWallet();
   const [cycleData, setCycleData] = useState<any>(null);
@@ -421,7 +413,6 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
       const tx = await contract.get_cycle({ cycle_id: cycleId });
       const simulated = await tx.simulate();
 
-      // Unwrap the Result type - it's wrapped in Ok { value: {...} }
       const data = (simulated.result as any)?.value || simulated.result;
 
       console.log("Cycle data for ID", cycleId, ":", data);
@@ -473,7 +464,6 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
         return;
       }
 
-      // Load each bill's details
       const billDetails = [];
       for (const billId of billIds) {
         const billTx = await contract.get_bill({ bill_id: billId });
@@ -488,13 +478,69 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
     }
   };
 
-  const handleCancelBill = async (billId: bigint) => {
+  const handleCancelBillOccurrence = async (billId: bigint, isRecurring: boolean) => {
+    if (!address || !signTransaction) return;
+
+    const confirmMessage = isRecurring
+      ? `Skip the next occurrence of this recurring bill?\n\n` +
+      `The bill will remain in your cycle but the next payment will be skipped.\n` +
+      `Note: You can only make one adjustment per month.`
+      : `Delete this one-time bill?\n\n` +
+      `This bill will be permanently removed from your cycle.\n` +
+      `Note: You can only make one adjustment per month.`;
+
+    const confirmCancel = window.confirm(confirmMessage);
+    if (!confirmCancel) return;
+
+    try {
+      const contract = new LockedInContract.Client({
+        ...LockedInContract.networks.testnet,
+        rpcUrl,
+        publicKey: address,
+      });
+
+      const tx = await contract.cancel_bill_occurrence({ bill_id: billId });
+
+      await tx.signAndSend({
+        signTransaction: async (xdr: string) => {
+          return await signTransaction(xdr, {
+            networkPassphrase: "Test SDF Network ; September 2015",
+          });
+        },
+      });
+
+      const successMsg = isRecurring
+        ? "Successfully skipped next occurrence! The bill will still recur in future months."
+        : "Bill deleted successfully!";
+
+      alert(successMsg);
+      setShowBillDetails(false);
+      setSelectedBill(null);
+      await loadCycleBills();
+      await loadCycleData();
+    } catch (error: any) {
+      console.error("Error cancelling bill occurrence:", error);
+
+      let errorMsg = "Failed to process bill cancellation";
+      if (error.message?.includes("MonthlyAdjustmentLimitReached")) {
+        errorMsg = "You have already made a bill adjustment this month. You can only add/cancel one bill per month.";
+      } else if (error.message) {
+        errorMsg = error.message;
+      }
+
+      alert(errorMsg);
+    }
+  };
+
+  const handleCancelBillPermanently = async (billId: bigint) => {
     if (!address || !signTransaction) return;
 
     const confirmCancel = window.confirm(
-      `Are you sure you want to cancel this bill?\n\n` +
-      `Note: You can only cancel one bill per month.\n` +
-      `The allocated amount will be returned to your available balance.`
+      `⚠️ DELETE BILL PERMANENTLY?\n\n` +
+      `This will completely remove this bill from your cycle.\n` +
+      `All future occurrences will be cancelled.\n\n` +
+      `This action cannot be undone!\n` +
+      `Note: You can only make one adjustment per month.`
     );
 
     if (!confirmCancel) return;
@@ -506,7 +552,7 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
         publicKey: address,
       });
 
-      const tx = await contract.cancel_bill({ bill_id: billId });
+      const tx = await contract.cancel_bill_all_occurrences({ bill_id: billId });
 
       await tx.signAndSend({
         signTransaction: async (xdr: string) => {
@@ -516,16 +562,15 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
         },
       });
 
-      alert("Bill cancelled successfully!");
+      alert("Bill permanently deleted!");
       setShowBillDetails(false);
       setSelectedBill(null);
       await loadCycleBills();
       await loadCycleData();
     } catch (error: any) {
-      console.error("Error cancelling bill:", error);
+      console.error("Error deleting bill:", error);
 
-      // Parse error message
-      let errorMsg = "Failed to cancel bill";
+      let errorMsg = "Failed to delete bill";
       if (error.message?.includes("MonthlyAdjustmentLimitReached")) {
         errorMsg = "You have already made a bill adjustment this month. You can only add/cancel one bill per month.";
       } else if (error.message) {
@@ -542,7 +587,6 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
       return;
     }
 
-    // Validate all fields first
     for (const bill of bills) {
       if (!bill.name || !bill.amount || !bill.dueDate) {
         alert("Please fill in all fields for each bill");
@@ -550,16 +594,14 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
       }
     }
 
-    // Calculate total allocation for new bills
     const cycleStartDate = new Date(Number(startDateTimestamp) * 1000);
     const cycleEndDate = new Date(Number(endDateTimestamp) * 1000);
     let newBillsAllocation = 0;
 
     for (const bill of bills) {
-      const billAmount = parseFloat(bill.amount) * 10_000_000; // Convert to stroops
+      const billAmount = parseFloat(bill.amount) * 10_000_000;
 
       if (bill.isRecurring) {
-        // Count actual occurrences for recurring bills within cycle
         const billDueDate = new Date(bill.dueDate);
         const dayOfMonth = billDueDate.getDate();
 
@@ -580,12 +622,10 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
 
         newBillsAllocation += billAmount * occurrences;
       } else {
-        // One-time bill
         newBillsAllocation += billAmount;
       }
     }
 
-    // Check if total allocation exceeds available balance
     const currentAllocated = calculateAllocated();
     const totalAllocated = currentAllocated + newBillsAllocation;
     const availableBalance = Number(totalDeposited) - Number(operatingFee);
@@ -610,13 +650,10 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
         publicKey: address,
       });
 
-      // Submit each bill
-      for (const bill of bills) {
-
+      const billsToAdd = bills.map(bill => {
         const amountInStroops = BigInt(Math.floor(parseFloat(bill.amount) * 10_000_000));
         const dueDateTimestamp = BigInt(Math.floor(new Date(bill.dueDate).getTime() / 1000));
 
-        // For recurring bills, calculate which months it should recur based on cycle period
         let recurrenceCalendar: number[] = [];
         if (bill.isRecurring) {
           const cycleStartDate = new Date(Number(startDateTimestamp) * 1000);
@@ -627,44 +664,37 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
           const monthsSet = new Set<number>();
           let currentDate = new Date(cycleStartDate);
 
-          // Iterate through cycle and find which months this bill occurs in
           while (currentDate <= cycleEndDate) {
-            const currentMonth = currentDate.getMonth() + 1; // 1-12
-            const currentYear = currentDate.getFullYear();
+            const currentMonth = currentDate.getMonth() + 1;
 
-            // Create the bill due date for this month
             const potentialDueDate = new Date(currentYear, currentMonth - 1, dayOfMonth);
 
-            // Only add this month if the bill due date falls within the cycle
             if (potentialDueDate >= cycleStartDate && potentialDueDate <= cycleEndDate) {
               monthsSet.add(currentMonth);
             }
 
-            // Move to next month
             currentDate.setMonth(currentDate.getMonth() + 1);
           }
 
           recurrenceCalendar = Array.from(monthsSet).sort((a, b) => a - b);
         }
 
-        const tx = await contract.add_bill({
-          cycle_id: cycleId,
-          name: bill.name,
-          amount: amountInStroops,
-          due_date: dueDateTimestamp,
-          is_recurring: bill.isRecurring,
-          recurrence_calendar: recurrenceCalendar,
-          is_emergency: bill.isEmergency,
-        });
+        return [bill.name, amountInStroops, dueDateTimestamp, bill.isRecurring, recurrenceCalendar] as [string, bigint, bigint, boolean, number[]];
 
-        await tx.signAndSend({
-          signTransaction: async (xdr: string) => {
-            return await signTransaction(xdr, {
-              networkPassphrase: "Test SDF Network ; September 2015",
-            });
-          },
-        });
-      }
+      });
+
+      const tx = await contract.add_bills({
+        cycle_id: cycleId,
+        bills: billsToAdd,
+      });
+
+      await tx.signAndSend({
+        signTransaction: async (xdr: string) => {
+          return await signTransaction!(xdr, {
+            networkPassphrase: "Test SDF Network ; September 2015",
+          });
+        },
+      });
 
       alert(`Successfully added ${bills.length} bill(s)!`);
       setBills([]);
@@ -696,12 +726,10 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
   console.log("is_active:", cycleData.is_active);
   console.log("is_active type:", typeof cycleData.is_active);
 
-  // Extract actual values from the nested objects
   const extractValue = (val: any): bigint => {
     if (typeof val === 'bigint') return val;
     if (typeof val === 'number') return BigInt(val);
     if (typeof val === 'string') return BigInt(val);
-    // Handle {i128: "value"} or {u64: "value"} format
     if (val && typeof val === 'object') {
       return BigInt(val.i128 || val.u64 || val.u32 || 0);
     }
@@ -720,7 +748,6 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
   const endDate = new Date(Number(endDateTimestamp) * 1000);
   const feeRate = (Number(feePercentage) / 100).toFixed(1);
 
-  // Calculate allocated amount from bills
   const calculateAllocated = () => {
     if (!cycleBills || cycleBills.length === 0) return 0;
 
@@ -733,36 +760,29 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
       const billAmount = Number(bill.amount || 0);
 
       if (bill.is_recurring && bill.recurrence_calendar && bill.recurrence_calendar.length > 0) {
-        // For recurring bills, count actual occurrences within the cycle date range
         const billDueDate = new Date(Number(bill.due_date) * 1000);
         const dayOfMonth = billDueDate.getDate();
 
         let occurrences = 0;
         let currentDate = new Date(cycleStartDate);
 
-        // Iterate through each month in the cycle
         while (currentDate <= cycleEndDate) {
-          const currentMonth = currentDate.getMonth() + 1; // 1-12
+          const currentMonth = currentDate.getMonth() + 1;
           const currentYear = currentDate.getFullYear();
 
-          // Check if this month is in the recurrence calendar
           if (bill.recurrence_calendar.includes(currentMonth)) {
-            // Create the bill due date for this month
             const potentialDueDate = new Date(currentYear, currentMonth - 1, dayOfMonth);
 
-            // Only count if this occurrence falls within the cycle
             if (potentialDueDate >= cycleStartDate && potentialDueDate <= cycleEndDate) {
               occurrences++;
             }
           }
 
-          // Move to next month
           currentDate.setMonth(currentDate.getMonth() + 1);
         }
 
         total += billAmount * occurrences;
       } else {
-        // One-time bill - only count if not paid
         if (!bill.is_paid) {
           total += billAmount;
         }
@@ -829,28 +849,28 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
           </div>
         </div>
 
-        <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem" }}>
+        <div style={{ marginTop: "1.5rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
           <Button
-            variant="tertiary"
-            size="sm"
+            variant="secondary"
+            size="md"
             onClick={() => {
               setShowBillsList(!showBillsList);
               if (!showBillsList) loadCycleBills();
             }}
           >
-            <Icon.List size="sm" />
-            {showBillsList ? "Hide Bills" : "View Bills"}
+            <Icon.List size="md" />
+            {showBillsList ? "Hide Bills" : "Manage Bills"}
           </Button>
           {cycleData.is_active && (
             <Button
-              variant="tertiary"
-              size="sm"
+              variant="primary"
+              size="md"
               onClick={() => {
                 setShowAddBills(true);
                 if (bills.length === 0) addNewBillForm();
               }}
             >
-              <Icon.Plus size="sm" />
+              <Icon.Plus size="md" />
               Add Bills
             </Button>
           )}
@@ -928,15 +948,29 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
 
                     <div>
                       <label style={{ display: "block", marginBottom: "0.5rem", fontSize: "0.9rem", fontWeight: 500 }}>
-                        Due Date *
+                        Due Date * (day 1-28 only)
                       </label>
                       <Input
                         id={`bill-due-date-${index}`}
                         type="date"
                         value={bill.dueDate}
-                        onChange={(e) => updateBillForm(index, "dueDate", e.target.value)}
+                        onChange={(e) => {
+                          const selectedDate = new Date(e.target.value);
+                          const dayOfMonth = selectedDate.getDate();
+
+                          // Validate day is between 1-28
+                          if (dayOfMonth < 1 || dayOfMonth > 28) {
+                            alert("Due date must be between day 1-28 of the month.\n\nThis ensures recurring bills work in all months including February (which has only 28 days).");
+                            return;
+                          }
+
+                          updateBillForm(index, "dueDate", e.target.value);
+                        }}
                         fieldSize="md"
                       />
+                      <small style={{ color: "#666", fontSize: "0.8rem", marginTop: "0.25rem", display: "block" }}>
+                        Must be day 1-28 (ensures recurring bills work in all months)
+                      </small>
                     </div>
                   </div>
 
@@ -1112,7 +1146,6 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
           </div>
         )}
 
-        {/* Bill Details Modal */}
         {showBillDetails && selectedBill && (
           <div
             style={{
@@ -1320,15 +1353,39 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
                 </div>
               </div>
 
-              <div style={{ marginTop: "2rem", display: "flex", gap: "1rem", justifyContent: "flex-end" }}>
+              <div style={{ marginTop: "2rem", display: "flex", gap: "1rem", justifyContent: "flex-end", flexWrap: "wrap" }}>
                 {!selectedBill.is_paid && (
-                  <Button
-                    variant="error"
-                    size="md"
-                    onClick={() => handleCancelBill(selectedBill.id)}
-                  >
-                    Cancel Bill
-                  </Button>
+                  <>
+                    {selectedBill.is_recurring ? (
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="md"
+                          onClick={() => handleCancelBillOccurrence(selectedBill.id, true)}
+                        >
+                          <Icon.SkipForward size="sm" />
+                          Skip Next Occurrence
+                        </Button>
+                        <Button
+                          variant="error"
+                          size="md"
+                          onClick={() => handleCancelBillPermanently(selectedBill.id)}
+                        >
+                          <Icon.Trash01 size="sm" />
+                          Delete Permanently
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        variant="error"
+                        size="md"
+                        onClick={() => handleCancelBillOccurrence(selectedBill.id, false)}
+                      >
+                        <Icon.Trash01 size="sm" />
+                        Delete Bill
+                      </Button>
+                    )}
+                  </>
                 )}
                 <Button
                   variant="tertiary"

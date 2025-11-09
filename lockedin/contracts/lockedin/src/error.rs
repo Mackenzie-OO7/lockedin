@@ -39,4 +39,7 @@ pub enum Error {
     InvalidFeePercentage = 50,
     InvalidAddress = 51,
     InvalidTimestamp = 52,
+
+    // Security errors
+    Reentrancy = 60,
 }

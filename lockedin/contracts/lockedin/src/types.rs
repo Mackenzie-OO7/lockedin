@@ -23,8 +23,8 @@ pub struct Bill {
     pub due_date: u64,
     pub is_paid: bool,
     pub is_recurring: bool,
-    pub recurrence_calendar: Vec<u32>, // List of months (1-12) when bill recurs
-    pub last_paid_date: Option<u64>,    // Timestamp of last payment (None if never paid)
+    pub recurrence_calendar: Vec<u32>,
+    pub last_paid_date: Option<u64>,
 }
 
 #[contracttype]
@@ -43,5 +43,5 @@ pub enum DataKey {
     UserCycles(Address),  // user -> Vec<cycle_id>
     CycleBills(u64),      // cycle_id -> Vec<bill_id>
     AllCycles,            // Global list of all cycle IDs (admin-only)
-    ReentrancyLock,       // Global reentrancy lock for payment operations
+    ReentrancyLock,
 }
