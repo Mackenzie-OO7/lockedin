@@ -20,9 +20,9 @@ for (const varName of requiredEnvVars) {
   }
 }
 
-let adminKeypair;
+let adminKeypair: Keypair;
 try {
-  adminKeypair = Keypair.fromSecret(process.env.ADMIN_SECRET_KEY);
+  adminKeypair = Keypair.fromSecret(process.env.ADMIN_SECRET_KEY!);
   console.log(`✅ Admin public key: ${adminKeypair.publicKey()}\n`);
 } catch (error) {
   console.error('❌ Invalid admin secret key');
@@ -30,10 +30,10 @@ try {
 }
 
 const contract = initializeContract(
-  process.env.ADMIN_SECRET_KEY,
-  process.env.CONTRACT_ID,
-  process.env.RPC_URL,
-  process.env.NETWORK_PASSPHRASE
+  process.env.ADMIN_SECRET_KEY!,
+  process.env.CONTRACT_ID!,
+  process.env.RPC_URL!,
+  process.env.NETWORK_PASSPHRASE!
 );
 
 console.log('🔒 LockedIn Keeper Service');
@@ -42,7 +42,6 @@ console.log(`Contract ID: ${process.env.CONTRACT_ID}`);
 console.log(`Network: ${process.env.STELLAR_NETWORK || 'TESTNET'}`);
 console.log(`RPC URL: ${process.env.RPC_URL}`);
 
-// Default cron schedule: every day at 12:00 PM UTC
 const cronSchedule = process.env.CRON_SCHEDULE || '0 12 * * *';
 console.log(`Cron Schedule: ${cronSchedule}`);
 console.log(`(Next run: ${cron.validate(cronSchedule) ? 'valid schedule' : 'INVALID SCHEDULE'})\n`);
@@ -52,7 +51,6 @@ if (!cron.validate(cronSchedule)) {
   process.exit(1);
 }
 
-// Manual run flag (for testing)
 const runNow = process.argv.includes('--now');
 
 if (runNow) {
@@ -67,7 +65,6 @@ if (runNow) {
       process.exit(1);
     });
 } else {
-  // Schedule cron job
   console.log('⏰ Keeper service started. Waiting for scheduled runs...\n');
   console.log('Press Ctrl+C to stop\n');
 
@@ -80,7 +77,6 @@ if (runNow) {
   });
 }
 
-// Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n\n👋 Keeper service stopped');
   process.exit(0);
