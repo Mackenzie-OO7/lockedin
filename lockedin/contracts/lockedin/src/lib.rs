@@ -211,6 +211,17 @@ impl LockedIn {
             .set(&user_cycles_key, &user_cycles);
         Self::extend_ttl(&env, &user_cycles_key);
 
+        // Add to global cycles list (for admin/keeper access)
+        let all_cycles_key = DataKey::AllCycles;
+        let mut all_cycles: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&all_cycles_key)
+            .unwrap_or(Vec::new(&env));
+        all_cycles.push_back(cycle_id);
+        env.storage().persistent().set(&all_cycles_key, &all_cycles);
+        Self::extend_ttl(&env, &all_cycles_key);
+
         let cycle_bills_key = DataKey::CycleBills(cycle_id);
         let empty_bills: Vec<u64> = Vec::new(&env);
         env.storage()
@@ -256,6 +267,26 @@ impl LockedIn {
             .unwrap_or(Vec::new(&env))
     }
 
+    // Admin-only: Get all cycle IDs across all users (for keeper service)
+    pub fn get_all_cycles(env: Env) -> Result<Vec<u64>, Error> {
+        let admin = Self::admin(env.clone())?;
+        admin.require_auth();
+
+        let all_cycles_key = DataKey::AllCycles;
+
+        // Check if key exists before extending TTL
+        if env.storage().persistent().has(&all_cycles_key) {
+            Self::extend_ttl(&env, &all_cycles_key);
+        }
+
+        Ok(env
+            .storage()
+            .persistent()
+            .get(&all_cycles_key)
+            .unwrap_or(Vec::new(&env)))
+    }
+
+    // User ends their own cycle - only after end_date has passed
     pub fn end_cycle(env: Env, cycle_id: u64) -> Result<(), Error> {
         let cycle_key = DataKey::Cycle(cycle_id);
         let mut cycle: BillCycle = env
@@ -282,15 +313,22 @@ impl LockedIn {
             .get(&cycle_bills_key)
             .unwrap_or(Vec::new(&env));
 
-        let mut total_bills: i128 = 0;
+        // Calculate total PAID bills only
+        let mut total_paid_bills: i128 = 0;
         for bill_id in bill_ids.iter() {
             let bill_key = DataKey::Bill(bill_id);
-            if let Some(types::Bill { amount, .. }) = env.storage().persistent().get(&bill_key) {
-                total_bills += amount;
+            if let Some(types::Bill {
+                amount, is_paid, ..
+            }) = env.storage().persistent().get(&bill_key)
+            {
+                if is_paid {
+                    total_paid_bills += amount;
+                }
             }
         }
 
-        let surplus = cycle.total_deposited - cycle.operating_fee - total_bills;
+        // Surplus = deposit - fee - paid bills
+        let surplus = cycle.total_deposited - cycle.operating_fee - total_paid_bills;
 
         if surplus > 0 {
             let usdc_token = Self::usdc_token(&env);
@@ -300,6 +338,62 @@ impl LockedIn {
 
         cycle.is_active = false;
         env.storage().persistent().set(&cycle_key, &cycle);
+        Self::extend_ttl(&env, &cycle_key);
+
+        events::CycleEnded { cycle_id, surplus }.publish(&env);
+
+        Ok(())
+    }
+
+    // Admin force-ends any cycle - can be called anytime, ignores end_date
+    pub fn admin_end_cycle(env: Env, cycle_id: u64) -> Result<(), Error> {
+        let admin = Self::admin(env.clone())?;
+        admin.require_auth();
+
+        let cycle_key = DataKey::Cycle(cycle_id);
+        let mut cycle: BillCycle = env
+            .storage()
+            .persistent()
+            .get(&cycle_key)
+            .ok_or(Error::CycleNotFound)?;
+
+        if !cycle.is_active {
+            return Err(Error::CycleAlreadyEnded);
+        }
+
+        let cycle_bills_key = DataKey::CycleBills(cycle_id);
+        let bill_ids: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&cycle_bills_key)
+            .unwrap_or(Vec::new(&env));
+
+        // Calculate total PAID bills only
+        let mut total_paid_bills: i128 = 0;
+        for bill_id in bill_ids.iter() {
+            let bill_key = DataKey::Bill(bill_id);
+            if let Some(types::Bill {
+                amount, is_paid, ..
+            }) = env.storage().persistent().get(&bill_key)
+            {
+                if is_paid {
+                    total_paid_bills += amount;
+                }
+            }
+        }
+
+        // Surplus = deposit - fee - paid bills
+        let surplus = cycle.total_deposited - cycle.operating_fee - total_paid_bills;
+
+        if surplus > 0 {
+            let usdc_token = Self::usdc_token(&env);
+            let token_client = token::TokenClient::new(&env, &usdc_token);
+            token_client.transfer(&env.current_contract_address(), &cycle.user, &surplus);
+        }
+
+        cycle.is_active = false;
+        env.storage().persistent().set(&cycle_key, &cycle);
+        Self::extend_ttl(&env, &cycle_key);
 
         events::CycleEnded { cycle_id, surplus }.publish(&env);
 
@@ -308,6 +402,8 @@ impl LockedIn {
 
     // Bill Management
 
+    // Add a single bill to a cycle
+    // No monthly limit - users can add bills freely
     pub fn add_bill(
         env: Env,
         cycle_id: u64,
@@ -316,10 +412,9 @@ impl LockedIn {
         due_date: u64,
         is_recurring: bool,
         recurrence_calendar: Vec<u32>,
-        is_emergency: bool,
     ) -> Result<u64, Error> {
         let cycle_key = DataKey::Cycle(cycle_id);
-        let mut cycle: BillCycle = env
+        let cycle: BillCycle = env
             .storage()
             .persistent()
             .get(&cycle_key)
@@ -339,17 +434,8 @@ impl LockedIn {
             return Err(Error::InvalidDueDate);
         }
 
-        if is_emergency {
-            // Emergency bills: Check monthly adjustment limit + special validation
-            let current_month = Self::get_current_month(&env);
-            if cycle.last_adjustment_month == current_month {
-                return Err(Error::MonthlyAdjustmentLimitReached);
-            }
-            Self::validate_emergency_bill(&env, cycle_id, amount, cycle.total_deposited)?;
-        } else {
-            // Regular bills: Only validate lead time (no monthly limit)
-            Self::validate_lead_time(&env, due_date)?;
-        }
+        // Validate lead time (7 days minimum before due date)
+        Self::validate_lead_time(&env, due_date)?;
 
         // Validate recurrence calendar
         if is_recurring {
@@ -370,7 +456,7 @@ impl LockedIn {
             is_paid: false,
             is_recurring,
             recurrence_calendar,
-            is_emergency,
+            last_paid_date: None,
         };
 
         let bill_key = DataKey::Bill(bill_id);
@@ -389,16 +475,87 @@ impl LockedIn {
             .set(&cycle_bills_key, &cycle_bills);
         Self::extend_ttl(&env, &cycle_bills_key);
 
-        // Update cycle's last adjustment month (only for emergency bills)
-        if is_emergency {
-            let current_month = Self::get_current_month(&env);
-            cycle.last_adjustment_month = current_month;
-            env.storage().persistent().set(&cycle_key, &cycle);
-        }
-
         events::BillAdded { bill_id, cycle_id }.publish(&env);
 
         Ok(bill_id)
+    }
+
+    // Add multiple bills in a single transaction
+    // No monthly limit - users can add bills freely
+    pub fn add_bills(
+        env: Env,
+        cycle_id: u64,
+        bills: Vec<(String, i128, u64, bool, Vec<u32>)>, // (name, amount, due_date, is_recurring, recurrence_calendar)
+    ) -> Result<Vec<u64>, Error> {
+        let cycle_key = DataKey::Cycle(cycle_id);
+        let cycle: BillCycle = env
+            .storage()
+            .persistent()
+            .get(&cycle_key)
+            .ok_or(Error::CycleNotFound)?;
+
+        cycle.user.require_auth();
+
+        if !cycle.is_active {
+            return Err(Error::CycleNotActive);
+        }
+
+        let mut bill_ids = Vec::new(&env);
+        let cycle_bills_key = DataKey::CycleBills(cycle_id);
+        let mut cycle_bills: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&cycle_bills_key)
+            .unwrap_or(Vec::new(&env));
+
+        for (name, amount, due_date, is_recurring, recurrence_calendar) in bills.iter() {
+            if amount <= 0 {
+                return Err(Error::InvalidBillAmount);
+            }
+
+            if due_date < cycle.start_date || due_date > cycle.end_date {
+                return Err(Error::InvalidDueDate);
+            }
+
+            Self::validate_lead_time(&env, due_date)?;
+
+            if is_recurring {
+                for month in recurrence_calendar.iter() {
+                    if month < 1 || month > 12 {
+                        return Err(Error::InvalidRecurrence);
+                    }
+                }
+            }
+
+            let bill_id = Self::next_bill_id(&env);
+            let bill = Bill {
+                id: bill_id,
+                cycle_id,
+                name,
+                amount,
+                due_date,
+                is_paid: false,
+                is_recurring,
+                recurrence_calendar,
+                last_paid_date: None,
+            };
+
+            let bill_key = DataKey::Bill(bill_id);
+            env.storage().persistent().set(&bill_key, &bill);
+            Self::extend_ttl(&env, &bill_key);
+
+            cycle_bills.push_back(bill_id);
+            bill_ids.push_back(bill_id);
+
+            events::BillAdded { bill_id, cycle_id }.publish(&env);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&cycle_bills_key, &cycle_bills);
+        Self::extend_ttl(&env, &cycle_bills_key);
+
+        Ok(bill_ids)
     }
 
     pub fn get_bill(env: Env, bill_id: u64) -> Result<Bill, Error> {
@@ -420,6 +577,7 @@ impl LockedIn {
     }
 
     // Sends funds back to user's wallet
+    // User can call ONLY on exact due date (same calendar day)
     pub fn pay_bill(env: Env, bill_id: u64) -> Result<(), Error> {
         let bill_key = DataKey::Bill(bill_id);
         let mut bill: Bill = env
@@ -439,10 +597,21 @@ impl LockedIn {
             .get(&cycle_key)
             .ok_or(Error::CycleNotFound)?;
 
+        // Only cycle owner can trigger payment
+        // Payment can only happen on exact due date (same calendar day)
         cycle.user.require_auth();
 
+        // Verify cycle is active
+        if !cycle.is_active {
+            return Err(Error::CycleNotActive);
+        }
+
         let current_time = env.ledger().timestamp();
-        if current_time < bill.due_date {
+        let bill_due_day_start = (bill.due_date / 86400) * 86400;
+        let current_day_start = (current_time / 86400) * 86400;
+
+        // Can only pay on exact due date
+        if current_day_start != bill_due_day_start {
             return Err(Error::BillNotDueYet);
         }
 
@@ -451,8 +620,96 @@ impl LockedIn {
         let token_client = token::TokenClient::new(&env, &usdc_token);
         token_client.transfer(&env.current_contract_address(), &cycle.user, &bill.amount);
 
-        bill.is_paid = true;
+        // Handle recurring bills - reschedule if not end of cycle
+        if bill.is_recurring {
+            // Calculate next due date (same day next month)
+            const SECONDS_IN_DAY: u64 = 86400;
+            const AVERAGE_DAYS_IN_MONTH: u64 = 30;
+
+            let next_due_date = bill.due_date + (AVERAGE_DAYS_IN_MONTH * SECONDS_IN_DAY);
+
+            // Only reschedule if next occurrence is before cycle ends
+            if next_due_date < cycle.end_date {
+                bill.due_date = next_due_date;
+                bill.is_paid = false; // Reset for next occurrence
+            } else {
+                // Last occurrence - mark as paid
+                bill.is_paid = true;
+            }
+        } else {
+            // One-time bill - mark as paid
+            bill.is_paid = true;
+        }
+
         env.storage().persistent().set(&bill_key, &bill);
+        Self::extend_ttl(&env, &bill_key);
+
+        events::BillPaid {
+            bill_id,
+            amount: bill.amount,
+        }
+        .publish(&env);
+
+        Ok(())
+    }
+
+    // Admin pays any bill for any user - used by keeper service for automation
+    // Admin can pay anytime (no due date restriction)
+    pub fn admin_pay_bill(env: Env, bill_id: u64) -> Result<(), Error> {
+        let admin = Self::admin(env.clone())?;
+        admin.require_auth();
+
+        let bill_key = DataKey::Bill(bill_id);
+        let mut bill: Bill = env
+            .storage()
+            .persistent()
+            .get(&bill_key)
+            .ok_or(Error::BillNotFound)?;
+
+        if bill.is_paid {
+            return Err(Error::BillAlreadyPaid);
+        }
+
+        let cycle_key = DataKey::Cycle(bill.cycle_id);
+        let cycle: BillCycle = env
+            .storage()
+            .persistent()
+            .get(&cycle_key)
+            .ok_or(Error::CycleNotFound)?;
+
+        // Verify cycle is active
+        if !cycle.is_active {
+            return Err(Error::CycleNotActive);
+        }
+
+        // Transfer USDC from contract to user's wallet
+        let usdc_token = Self::usdc_token(&env);
+        let token_client = token::TokenClient::new(&env, &usdc_token);
+        token_client.transfer(&env.current_contract_address(), &cycle.user, &bill.amount);
+
+        // Handle recurring bills - reschedule if not end of cycle
+        if bill.is_recurring {
+            // Calculate next due date (same day next month)
+            const SECONDS_IN_DAY: u64 = 86400;
+            const AVERAGE_DAYS_IN_MONTH: u64 = 30;
+
+            let next_due_date = bill.due_date + (AVERAGE_DAYS_IN_MONTH * SECONDS_IN_DAY);
+
+            // Only reschedule if next occurrence is before cycle ends
+            if next_due_date < cycle.end_date {
+                bill.due_date = next_due_date;
+                bill.is_paid = false; // Reset for next occurrence
+            } else {
+                // Last occurrence - mark as paid
+                bill.is_paid = true;
+            }
+        } else {
+            // One-time bill - mark as paid
+            bill.is_paid = true;
+        }
+
+        env.storage().persistent().set(&bill_key, &bill);
+        Self::extend_ttl(&env, &bill_key);
 
         events::BillPaid {
             bill_id,
@@ -588,37 +845,148 @@ impl LockedIn {
         Ok(())
     }
 
-    // Validate emergency bill (max 10% of total deposited, 2x fee)
-    fn validate_emergency_bill(
-        env: &Env,
-        cycle_id: u64,
-        amount: i128,
-        total_deposited: i128,
-    ) -> Result<(), Error> {
-        let cycle_bills_key = DataKey::CycleBills(cycle_id);
-        let bill_ids: Vec<u64> = env
-            .storage()
-            .persistent()
-            .get(&cycle_bills_key)
-            .unwrap_or(Vec::new(env));
+    // Validate bill due date is on day 1-28 of month
+    // This ensures recurring bills can always fall on the same day each month (even February)
+    fn validate_day_of_month(due_date: u64) -> Result<(), Error> {
+        const SECONDS_IN_DAY: u64 = 86400;
 
-        let mut total_emergency: i128 = 0;
-        for bill_id in bill_ids.iter() {
-            let bill_key = DataKey::Bill(bill_id);
-            if let Some(types::Bill {
-                amount: bill_amt,
-                is_emergency: true,
-                ..
-            }) = env.storage().persistent().get(&bill_key)
-            {
-                total_emergency += bill_amt;
+        // Get day of month from timestamp
+        // We need to calculate which day of the month this timestamp represents
+        let days_since_epoch = due_date / SECONDS_IN_DAY;
+
+        // Calculate year and month to determine day of month
+        let mut remaining_days = days_since_epoch;
+        let mut year = 1970u32;
+
+        // Subtract complete years
+        loop {
+            let days_in_year = if Self::is_leap_year(year) { 366 } else { 365 };
+            if remaining_days >= days_in_year {
+                remaining_days -= days_in_year;
+                year += 1;
+            } else {
+                break;
             }
         }
 
-        let max_emergency = total_deposited / 10; // 10%
-        if total_emergency + amount > max_emergency {
-            return Err(Error::EmergencyBillLimitExceeded);
+        // Subtract complete months to find day of month
+        let days_in_months = if Self::is_leap_year(year) {
+            [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        } else {
+            [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        };
+
+        for &days_in_month in days_in_months.iter() {
+            if remaining_days >= days_in_month as u64 {
+                remaining_days -= days_in_month as u64;
+            } else {
+                break;
+            }
         }
+
+        // remaining_days is now the day of month (0-indexed)
+        let day_of_month = remaining_days + 1;  // Convert to 1-indexed
+
+        // Validate day is between 1 and 28
+        if day_of_month < 1 || day_of_month > 28 {
+            return Err(Error::InvalidDueDate);
+        }
+
+        Ok(())
+    }
+
+    // Check if a year is a leap year
+    fn is_leap_year(year: u32) -> bool {
+        (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)
+    }
+
+    // Cancel multiple bills in a single transaction
+    // Subject to monthly adjustment limit - can only do this once per month
+    pub fn cancel_bills(env: Env, bill_ids: Vec<u64>) -> Result<(), Error> {
+        if bill_ids.is_empty() {
+            return Err(Error::InvalidBillAmount); // Reusing error, could add EmptyBillList error
+        }
+
+        // Get first bill to determine cycle and verify ownership
+        let first_bill_key = DataKey::Bill(bill_ids.get(0).unwrap());
+        let first_bill: Bill = env
+            .storage()
+            .persistent()
+            .get(&first_bill_key)
+            .ok_or(Error::BillNotFound)?;
+
+        let cycle_key = DataKey::Cycle(first_bill.cycle_id);
+        let mut cycle: BillCycle = env
+            .storage()
+            .persistent()
+            .get(&cycle_key)
+            .ok_or(Error::CycleNotFound)?;
+
+        cycle.user.require_auth();
+
+        if !cycle.is_active {
+            return Err(Error::CycleNotActive);
+        }
+
+        // Check monthly adjustment limit
+        let current_month = Self::get_current_month(&env);
+        if cycle.last_adjustment_month == current_month {
+            return Err(Error::MonthlyAdjustmentLimitReached);
+        }
+
+        // Verify all bills belong to the same cycle
+        for bill_id in bill_ids.iter() {
+            let bill_key = DataKey::Bill(bill_id);
+            let bill: Bill = env
+                .storage()
+                .persistent()
+                .get(&bill_key)
+                .ok_or(Error::BillNotFound)?;
+
+            if bill.cycle_id != first_bill.cycle_id {
+                return Err(Error::InvalidDueDate); // Reusing error, could add BillFromDifferentCycle
+            }
+
+            if bill.is_paid {
+                return Err(Error::BillAlreadyPaid);
+            }
+        }
+
+        // Remove all bills
+        let cycle_bills_key = DataKey::CycleBills(first_bill.cycle_id);
+        let cycle_bills: Vec<u64> = env
+            .storage()
+            .persistent()
+            .get(&cycle_bills_key)
+            .unwrap_or(Vec::new(&env));
+
+        let mut new_bills = Vec::new(&env);
+        for id in cycle_bills.iter() {
+            let mut should_remove = false;
+            for bill_id in bill_ids.iter() {
+                if id == bill_id {
+                    should_remove = true;
+                    break;
+                }
+            }
+
+            if !should_remove {
+                new_bills.push_back(id);
+            } else {
+                // Remove bill from storage
+                let bill_key = DataKey::Bill(id);
+                env.storage().persistent().remove(&bill_key);
+                events::BillCancelled { bill_id: id }.publish(&env);
+            }
+        }
+
+        env.storage().persistent().set(&cycle_bills_key, &new_bills);
+        Self::extend_ttl(&env, &cycle_bills_key);
+
+        // Update last adjustment month
+        cycle.last_adjustment_month = current_month;
+        env.storage().persistent().set(&cycle_key, &cycle);
+        Self::extend_ttl(&env, &cycle_key);
 
         Ok(())
     }

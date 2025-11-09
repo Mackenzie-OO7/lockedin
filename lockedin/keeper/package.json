@@ -1,0 +1,17 @@
+{
+  "name": "lockedin-keeper",
+  "version": "1.0.0",
+  "description": "Automated bill payment keeper service for LockedIn",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^12.3.0",
+    "lockedin": "file:../",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
+  }
+}

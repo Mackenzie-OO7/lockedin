@@ -3,14 +3,16 @@ import {
   ISupportedWallet,
   StellarWalletsKit,
   WalletNetwork,
-  sep43Modules,
+  allowAllModules,
+  FREIGHTER_ID,
 } from "@creit.tech/stellar-wallets-kit";
 import { Horizon } from "@stellar/stellar-sdk";
 import { networkPassphrase, stellarNetwork } from "../contracts/util";
 
 const kit: StellarWalletsKit = new StellarWalletsKit({
   network: networkPassphrase as WalletNetwork,
-  modules: sep43Modules(),
+  modules: allowAllModules(),
+  selectedWalletId: storage.getItem("walletId") ?? FREIGHTER_ID,
 });
 
 export const connectWallet = async () => {
