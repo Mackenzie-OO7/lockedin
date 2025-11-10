@@ -536,10 +536,10 @@ impl LockedIn {
             return Err(Error::InvalidDueDate);
         }
 
-        // ensures recurring bills work in all months
+        // Validate day of month is 1-28 (ensures recurring bills work in all months)
         Self::validate_day_of_month(due_date)?;
 
-        // 7 days minimum before due date
+        // Validate lead time (7 days minimum before due date)
         Self::validate_lead_time(&env, due_date)?;
 
         if is_recurring {
@@ -550,7 +550,7 @@ impl LockedIn {
             }
         }
 
-        // ensure bill doesn't exceed available funds
+        // Validate allocation - ensure bill doesn't exceed available funds
         Self::validate_allocation(&env, cycle_id, &cycle, amount, is_recurring)?;
 
         let bill_id = Self::next_bill_id(&env);
@@ -704,7 +704,7 @@ impl LockedIn {
     }
 
     // Sends funds back to user's wallet
-    // User can call ONLY on exact due date
+    // User can call ONLY on exact due date (same calendar day)
     pub fn pay_bill(env: Env, bill_id: u64) -> Result<(), Error> {
         Self::acquire_lock(&env)?;
 
