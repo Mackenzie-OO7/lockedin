@@ -99,7 +99,7 @@ LockedIn helps users maintain financial discipline by locking funds in time-base
 
 git clone https://github.com/Mackenzie-OO7/lockedin.git
 
-cd lockedin/lockedin
+cd lockedin/
 
 # Build the contract
 
