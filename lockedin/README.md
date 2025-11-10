@@ -267,8 +267,6 @@ MIT License - see LICENSE file for details
 
 - Built with [Scaffold Stellar](https://github.com/AhaLabs/scaffold-stellar)
 
-- Powered by [Soroban](https://soroban.stellar.org/) smart contracts
-
 - Security patterns inspired by [OpenZeppelin](https://www.openzeppelin.com/)
 
 ---

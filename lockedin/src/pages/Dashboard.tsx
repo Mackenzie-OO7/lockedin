@@ -666,6 +666,7 @@ function CycleCard({ cycleId }: { cycleId: bigint }) {
 
           while (currentDate <= cycleEndDate) {
             const currentMonth = currentDate.getMonth() + 1;
+            const currentYear = currentDate.getFullYear();
 
             const potentialDueDate = new Date(currentYear, currentMonth - 1, dayOfMonth);
 
