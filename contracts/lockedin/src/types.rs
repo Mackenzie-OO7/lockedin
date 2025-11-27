@@ -2,6 +2,21 @@ use soroban_sdk::{contracttype, Address, String, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BillCategory {
+    Housing,
+    Utilities,
+    Transportation,
+    Food,
+    Healthcare,
+    Insurance,
+    Entertainment,
+    Education,
+    Debt,
+    Other,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BillCycle {
     pub user: Address,
     pub start_date: u64,
@@ -25,6 +40,7 @@ pub struct Bill {
     pub is_recurring: bool,
     pub recurrence_calendar: Vec<u32>,
     pub last_paid_date: Option<u64>,
+    pub category: BillCategory,
 }
 
 #[contracttype]

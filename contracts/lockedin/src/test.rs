@@ -56,9 +56,9 @@ fn test_initialization() {
     let client = create_lockedin_contract(&env, &admin, &usdc_token);
 
     assert_eq!(client.admin(), admin);
-    assert_eq!(client.get_usdc_token(), usdc_token);
+    assert_eq!(client.usdc_token(), usdc_token);
     assert_eq!(client.fee_recipient(), admin);
-    assert_eq!(client.get_fee_percentage(), 200); // 2% default
+    assert_eq!(client.fee_percentage(), 200); // 2% default
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn test_set_fee_percentage() {
 
     client.set_fee_percentage(&500); // 5%
 
-    assert_eq!(client.get_fee_percentage(), 500);
+    assert_eq!(client.fee_percentage(), 500);
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn test_create_cycle() {
 
     let cycle_id = client.create_cycle(&user, &3, &amount);
 
-    assert_eq!(cycle_id, 0);
+    assert_eq!(cycle_id, 1);
 
     let cycle = client.get_cycle(&cycle_id);
     assert_eq!(cycle.user, user);
@@ -196,16 +196,19 @@ fn test_add_bill() {
     let due_date = 1000 + (10 * 24 * 60 * 60); // 10 days
     let recurrence_calendar = Vec::new(&env);
 
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &bill_name,
-        &bill_amount,
-        &due_date,
-        &false,
-        &recurrence_calendar,
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        bill_name.clone(),
+        bill_amount,
+        due_date,
+        false,
+        recurrence_calendar.clone(),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
-    assert_eq!(bill_id, 0);
+    assert_eq!(bill_id, 1);
 
     let bill = client.get_bill(&bill_id);
     assert_eq!(bill.name, bill_name);
@@ -232,14 +235,17 @@ fn test_pay_bill() {
     let bill_amount = 10_000_000_000_000_000_000i128;
     let due_date = 1000 + (10 * 24 * 60 * 60); // 10 days
 
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Water"),
-        &bill_amount,
-        &due_date,
-        &false,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Water"),
+        bill_amount,
+        due_date,
+        false,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
     set_ledger_time(&env, due_date + 1, 100 + (17280 * 11));
 
@@ -267,14 +273,17 @@ fn test_pay_bill_not_due() {
     let cycle_id = client.create_cycle(&user, &3, &amount);
 
     let due_date = 1000 + (10 * 24 * 60 * 60);
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Water"),
-        &10_000_000_000_000_000_000i128,
-        &due_date,
-        &false,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Water"),
+        10_000_000_000_000_000_000i128,
+        due_date,
+        false,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
     client.pay_bill(&bill_id);
 }
@@ -324,7 +333,7 @@ fn test_end_cycle_too_early() {
 }
 
 #[test]
-fn test_cancel_bill_occurrence() {
+fn test_skip_bill() {
     let env = Env::default();
     env.mock_all_auths();
     set_ledger_time(&env, 1000, 100);
@@ -340,18 +349,21 @@ fn test_cancel_bill_occurrence() {
     let cycle_id = client.create_cycle(&user, &3, &amount);
 
     let due_date = 1000 + (10 * 24 * 60 * 60);
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Internet"),
-        &15_000_000_000_000_000_000i128,
-        &due_date,
-        &false,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Internet"),
+        15_000_000_000_000_000_000i128,
+        due_date,
+        false,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
     set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
 
-    client.cancel_bill_occurrence(&bill_id);
+    client.skip_bill(&bill_id);
 }
 
 #[test]
@@ -373,23 +385,27 @@ fn test_get_cycle_bills() {
     let due_date_1 = 1000 + (10 * 24 * 60 * 60); // 10 days
     let due_date_2 = 1000 + (15 * 24 * 60 * 60); // 15 days
 
-    client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Bill 1"),
-        &10_000_000_000_000_000_000i128,
-        &due_date_1,
-        &false,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Bill 1"),
+        10_000_000_000_000_000_000i128,
+        due_date_1,
+        false,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    client.add_bills(&cycle_id, &bills);
 
-    client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Bill 2"),
-        &15_000_000_000_000_000_000i128,
-        &due_date_2,
-        &false,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Bill 2"),
+        15_000_000_000_000_000_000i128,
+        due_date_2,
+        false,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    client.add_bills(&cycle_id, &bills);
 
     let bills = client.get_cycle_bills(&cycle_id);
 
@@ -417,14 +433,16 @@ fn test_add_bill_day_29_validation() {
 
     // Try to add bill with day 29 (should fail)
     let due_date = 1000 + (29 * 24 * 60 * 60);
-    client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Bad Bill"),
-        &10_000_000_000_000_000_000i128,
-        &due_date,
-        &true,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Bad Bill"),
+        10_000_000_000_000_000_000i128,
+        due_date,
+        true,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    client.add_bills(&cycle_id, &bills);
 }
 
 #[test]
@@ -445,14 +463,16 @@ fn test_over_allocation_protection() {
     let cycle_id = client.create_cycle(&user, &3, &amount);
 
     let due_date = 1000 + (10 * 24 * 60 * 60);
-    client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Too Much"),
-        &99_000_000_000_000_000_000i128, // 99 USDC
-        &due_date,
-        &false,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Too Much"),
+        99_000_000_000_000_000_000i128, // 99 USDC
+        due_date,
+        false,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    client.add_bills(&cycle_id, &bills);
 }
 
 #[test]
@@ -475,14 +495,17 @@ fn test_double_payment_prevention_recurring() {
     let due_date = 1000 + (10 * 24 * 60 * 60);
     let recurrence_calendar = Vec::from_array(&env, [1, 2, 3]);
 
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Recurring Bill"),
-        &10_000_000_000_000_000_000i128,
-        &due_date,
-        &true,
-        &recurrence_calendar,
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Recurring Bill"),
+        10_000_000_000_000_000_000i128,
+        due_date,
+        true,
+        recurrence_calendar.clone(),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
     set_ledger_time(&env, due_date + 1, 100 + (17280 * 11));
     client.admin_pay_bill(&bill_id);
@@ -492,7 +515,7 @@ fn test_double_payment_prevention_recurring() {
 }
 
 #[test]
-fn test_cancel_bill_occurrence_recurring() {
+fn test_skip_bill_recurring() {
     let env = Env::default();
     env.mock_all_auths();
     set_ledger_time(&env, 1000, 100);
@@ -510,18 +533,21 @@ fn test_cancel_bill_occurrence_recurring() {
     let due_date = 1000 + (10 * 24 * 60 * 60);
     let recurrence_calendar = Vec::from_array(&env, [1, 2, 3]);
 
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Recurring Bill"),
-        &10_000_000_000_000_000_000i128,
-        &due_date,
-        &true,
-        &recurrence_calendar,
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Recurring Bill"),
+        10_000_000_000_000_000_000i128,
+        due_date,
+        true,
+        recurrence_calendar.clone(),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
     set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
 
-    client.cancel_bill_occurrence(&bill_id);
+    client.skip_bill(&bill_id);
 
     let bill = client.get_bill(&bill_id);
     assert_eq!(bill.is_recurring, true);
@@ -530,7 +556,7 @@ fn test_cancel_bill_occurrence_recurring() {
 }
 
 #[test]
-fn test_cancel_bill_all_occurrences() {
+fn test_delete_bill() {
     let env = Env::default();
     env.mock_all_auths();
     set_ledger_time(&env, 1000, 100);
@@ -548,18 +574,21 @@ fn test_cancel_bill_all_occurrences() {
     let due_date = 1000 + (10 * 24 * 60 * 60);
     let recurrence_calendar = Vec::from_array(&env, [1, 2, 3]);
 
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Recurring Bill"),
-        &10_000_000_000_000_000_000i128,
-        &due_date,
-        &true,
-        &recurrence_calendar,
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Recurring Bill"),
+        10_000_000_000_000_000_000i128,
+        due_date,
+        true,
+        recurrence_calendar.clone(),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
     set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
 
-    client.cancel_bill_all_occurrences(&bill_id);
+    client.delete_bill(&bill_id);
 
     let bills = client.get_cycle_bills(&cycle_id);
     assert_eq!(bills.len(), 0);
@@ -593,6 +622,7 @@ fn test_batch_add_bills() {
         due_date_1,
         false,
         Vec::new(&env),
+        BillCategory::Other,
     ));
 
     bills.push_back((
@@ -601,6 +631,7 @@ fn test_batch_add_bills() {
         due_date_2,
         false,
         Vec::new(&env),
+        BillCategory::Other,
     ));
 
     bills.push_back((
@@ -609,28 +640,29 @@ fn test_batch_add_bills() {
         due_date_3,
         false,
         Vec::new(&env),
+        BillCategory::Other,
     ));
 
     let bill_ids = client.add_bills(&cycle_id, &bills);
 
     assert_eq!(bill_ids.len(), 3);
-    assert_eq!(bill_ids.get(0).unwrap(), 0);
-    assert_eq!(bill_ids.get(1).unwrap(), 1);
-    assert_eq!(bill_ids.get(2).unwrap(), 2);
+    assert_eq!(bill_ids.get(0).unwrap(), 1);
+    assert_eq!(bill_ids.get(1).unwrap(), 2);
+    assert_eq!(bill_ids.get(2).unwrap(), 3);
 
     let cycle_bills = client.get_cycle_bills(&cycle_id);
     assert_eq!(cycle_bills.len(), 3);
 }
 
 #[test]
-fn test_keeper_end_cycle() {
+fn test_end_cycle_anyone_after_end_date() {
     let env = Env::default();
     env.mock_all_auths();
     set_ledger_time(&env, 1000, 100);
 
     let admin = Address::generate(&env);
     let user = Address::generate(&env);
-    let _keeper = Address::generate(&env);
+    let anyone = Address::generate(&env); // Anyone can call end_cycle after end_date
     let (usdc_token, token) = create_token_contract(&env, &admin);
     let client = create_lockedin_contract(&env, &admin, &usdc_token);
 
@@ -641,7 +673,8 @@ fn test_keeper_end_cycle() {
 
     set_ledger_time(&env, 1000 + (100 * 24 * 60 * 60), 100 + (17280 * 100));
 
-    client.keeper_end_cycle(&cycle_id);
+    // Anyone can end the cycle after end_date
+    client.end_cycle(&cycle_id);
 
     let cycle = client.get_cycle(&cycle_id);
     assert_eq!(cycle.is_active, false);
@@ -649,7 +682,7 @@ fn test_keeper_end_cycle() {
 
 #[test]
 #[should_panic(expected = "#30")]
-fn test_keeper_end_cycle_too_early() {
+fn test_end_cycle_too_early_anyone() {
     let env = Env::default();
     env.mock_all_auths();
     set_ledger_time(&env, 1000, 100);
@@ -665,7 +698,8 @@ fn test_keeper_end_cycle_too_early() {
     let cycle_id = client.create_cycle(&user, &3, &amount);
 
     set_ledger_time(&env, 1000 + (10 * 24 * 60 * 60), 100 + (17280 * 10));
-    client.keeper_end_cycle(&cycle_id);
+    // Should fail - cycle hasn't reached end_date yet
+    client.end_cycle(&cycle_id);
 }
 
 #[test]
@@ -684,7 +718,7 @@ fn test_admin_transfer_and_cancel() {
 }
 
 #[test]
-#[should_panic(expected = "#40")]
+#[should_panic(expected = "#42")]
 fn test_admin_transfer_race_condition_protection() {
     let env = Env::default();
     env.mock_all_auths();
@@ -702,7 +736,7 @@ fn test_admin_transfer_race_condition_protection() {
 }
 
 #[test]
-fn test_batch_cancel_bills_occurrences() {
+fn test_batch_skip_bills() {
     let env = Env::default();
     env.mock_all_auths();
     set_ledger_time(&env, 1000, 100);
@@ -720,28 +754,34 @@ fn test_batch_cancel_bills_occurrences() {
     let due_date_1 = 1000 + (10 * 24 * 60 * 60);
     let due_date_2 = 1000 + (15 * 24 * 60 * 60);
 
-    let bill_id_1 = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Bill 1"),
-        &10_000_000_000_000_000_000i128,
-        &due_date_1,
-        &false,
-        &Vec::new(&env),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Bill 1"),
+        10_000_000_000_000_000_000i128,
+        due_date_1,
+        false,
+        Vec::new(&env),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id_1 = bill_ids.get(0).unwrap();
 
-    let bill_id_2 = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Bill 2"),
-        &15_000_000_000_000_000_000i128,
-        &due_date_2,
-        &true,
-        &Vec::from_array(&env, [1, 2]),
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Bill 2"),
+        15_000_000_000_000_000_000i128,
+        due_date_2,
+        true,
+        Vec::from_array(&env, [1, 2]),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id_2 = bill_ids.get(0).unwrap();
 
     set_ledger_time(&env, 1000 + (31 * 24 * 60 * 60), 100 + (17280 * 31));
 
     let bill_ids = Vec::from_array(&env, [bill_id_1, bill_id_2]);
-    client.cancel_bills_occurrences(&bill_ids);
+    client.skip_bills(&bill_ids);
 
     let bill_2 = client.get_bill(&bill_id_2);
     assert_eq!(bill_2.is_recurring, true);
@@ -770,14 +810,17 @@ fn test_recurring_bill_with_recurrence_calendar() {
     let due_date = 1000 + (10 * 24 * 60 * 60);
     let recurrence_calendar = Vec::from_array(&env, [1, 3, 5]);
 
-    let bill_id = client.add_bill(
-        &cycle_id,
-        &String::from_str(&env, "Quarterly Bill"),
-        &10_000_000_000_000_000_000i128,
-        &due_date,
-        &true,
-        &recurrence_calendar,
-    );
+    let mut bills = Vec::new(&env);
+    bills.push_back((
+        String::from_str(&env, "Quarterly Bill"),
+        10_000_000_000_000_000_000i128,
+        due_date,
+        true,
+        recurrence_calendar.clone(),
+        BillCategory::Other,
+    ));
+    let bill_ids = client.add_bills(&cycle_id, &bills);
+    let bill_id = bill_ids.get(0).unwrap();
 
     let bill = client.get_bill(&bill_id);
     assert_eq!(bill.is_recurring, true);

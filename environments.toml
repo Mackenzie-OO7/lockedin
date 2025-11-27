@@ -61,7 +61,7 @@ default = true # Optional. Whether to use this account as the `--source` for com
 # LockedIn contract
 [development.contracts.lockedin]
 client = true
-constructor_args = "--admin levai --usdc_token CCSN4OJD36ZAK7IT4LSHJEKRUB2JWWFP5NW7NDFZK56OHYVWKXM37V24"
+constructor_args = "--admin levai --usdc_token CAICTVZHY6JESLVEBHR5NQBNAGBOKQC2CLJIS2TCAWLLP7S6WWITYXI4"
 
 # Coming Soon: Specify live contracts to bind & import in this project using the given name.
 # During initialization, these contracts will also be "spooned" into the development network,
@@ -83,7 +83,7 @@ default = true
 [staging.contracts]
 # LockedIn deployed to testnet
 [staging.contracts.lockedin]
-id = "CDY27OY75HQOBGNJPOOQICPFLUZLUIVHLA5FVY56ZUYGKGQKC2TZ7LUI"
+id = "CCUBYPV6KJWOXPXGKKTG4DUKUW576S2CN7ABHW6BEDAYJWQ4IHRGJP2Z"
 client = true
 
 ### Production environment configuration

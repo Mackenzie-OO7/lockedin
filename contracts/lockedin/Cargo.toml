@@ -16,6 +16,7 @@ doctest = false
 
 [dependencies]
 soroban-sdk = "23.0.3"
+time = { version = "0.3", default-features = false }
 
 [dev-dependencies]
 stellar-xdr = { version = "23.0.0", features = ["curr", "serde"] }

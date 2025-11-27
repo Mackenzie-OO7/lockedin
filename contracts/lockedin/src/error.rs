@@ -34,12 +34,21 @@ pub enum Error {
     // Admin transfer errors
     NoPendingAdminTransfer = 40,
     AdminTransferExpired = 41,
+    PendingAdminTransferExists = 42,
 
     // Input validation errors
     InvalidFeePercentage = 50,
     InvalidAddress = 51,
     InvalidTimestamp = 52,
 
+    // Configuration errors
+    FeeRecipientNotSet = 53,
+    UsdcTokenNotSet = 54,
+    FeePercentageNotSet = 55,
+
     // Security errors
     Reentrancy = 60,
+
+    // Token transfer errors
+    TokenTransferFailed = 70,
 }
