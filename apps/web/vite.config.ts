@@ -19,6 +19,15 @@ export default defineConfig(() => {
     ],
     build: {
       target: "esnext",
+      rollupOptions: {
+        onwarn(warning, warn) {
+          // Suppress "export * from '@stellar/stellar-sdk'" warning
+          if (warning.code === 'MODULE_LEVEL_DIRECTIVE' && warning.message.includes('@stellar/stellar-sdk')) {
+            return;
+          }
+          warn(warning);
+        },
+      },
     },
     optimizeDeps: {
       exclude: ["@stellar/stellar-xdr-json"],

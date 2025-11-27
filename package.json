@@ -48,5 +48,8 @@
       "eslint --fix --no-warn-ignored",
       "prettier --write --ignore-unknown"
     ]
+  },
+  "dependencies": {
+    "@stellar/stellar-sdk": "^14.3.3"
   }
 }
