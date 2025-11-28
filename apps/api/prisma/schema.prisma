@@ -1,0 +1,108 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// User & Profile
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  walletAddress String    @unique
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  profile       Profile?
+  templates     BillTemplate[]
+  analytics     Analytics?
+
+  @@index([walletAddress])
+}
+
+model Profile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String?
+  email     String?
+  avatar    String?  // URL or base64 image
+
+  // Notification preferences (Phase 2)
+  emailOnPayment       Boolean @default(false)
+  emailOnDueSoon       Boolean @default(false)
+  emailMonthlySummary  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================
+// Bill Templates
+// ============================================
+
+model BillTemplate {
+  id          String         @id @default(cuid())
+  userId      String
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String         // e.g., "My Monthly Bills"
+  description String?
+
+  bills       TemplateBill[]
+
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  @@index([userId])
+}
+
+model TemplateBill {
+  id          String        @id @default(cuid())
+  templateId  String
+  template    BillTemplate  @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  name        String
+  category    String        // BillCategory as string
+  amount      String        // Store as string to avoid float precision issues
+  isRecurring Boolean
+  dayOfMonth  Int           // 1-28
+
+  @@index([templateId])
+}
+
+// ============================================
+// Analytics (Cached/Aggregated Data)
+// ============================================
+
+model Analytics {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Totals
+  totalLocked     String   // Total USDC locked across all cycles
+  totalPaid       String   // Total USDC paid for bills
+  totalSurplus    String   // Total USDC returned as surplus
+
+  // Counts
+  billsPaidCount  Int
+  activeCycles    Int
+  completedCycles Int
+
+  // Aggregated data
+  categoryBreakdown Json   // { "Netflix": "180", "Rent": "14400", ... }
+  monthlyTrend      Json   // [{ month: "2025-01", spent: "1200" }, ...]
+
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+}

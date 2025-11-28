@@ -3,6 +3,10 @@ import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
 import { healthRouter } from './routes/health.js';
+import { authRouter } from './routes/auth.js';
+import { profileRouter } from './routes/profile.js';
+import { templateRouter } from './routes/template.js';
+import { analyticsRouter } from './routes/analytics.js';
 import { errorHandler } from './middleware/error.js';
 
 // Load environment variables
@@ -22,6 +26,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // Routes
 app.use('/api/health', healthRouter);
+app.use('/api/auth', authRouter);
+app.use('/api/profile', profileRouter);
+app.use('/api/templates', templateRouter);
+app.use('/api/analytics', analyticsRouter);
 
 // Error handling middleware (must be last)
 app.use(errorHandler);
