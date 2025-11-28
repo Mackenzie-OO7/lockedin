@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { healthRouter } from './routes/health.js';
 import { authRouter } from './routes/auth.js';
 import { profileRouter } from './routes/profile.js';
@@ -9,8 +11,10 @@ import { templateRouter } from './routes/template.js';
 import { analyticsRouter } from './routes/analytics.js';
 import { errorHandler } from './middleware/error.js';
 
-// Load environment variables
-dotenv.config();
+// Load environment variables from root directory
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 3001;

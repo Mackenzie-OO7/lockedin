@@ -43,3 +43,8 @@ packages/*
 # generated contract client imports
 src/contracts/*
 !src/contracts/util.ts
+
+# SQLite database files
+*.db
+*.db-journal
+
