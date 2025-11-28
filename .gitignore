@@ -48,3 +48,6 @@ src/contracts/*
 *.db
 *.db-journal
 
+# guides
+guides/
+
